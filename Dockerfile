@@ -8,4 +8,4 @@ ENV JAVA_OPTS="-Djava.library.path=/usr/lib/jni:/usr/lib/x86_64-linux-gnu -Xmx4g
 COPY target/*.jar royawl-recommendation-service.jar
 
 # Dynamically assign Port and Profile at runtime
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -Dlog4j2.configurationFile=${LOG4J2_CONFIG} -jar /royawl-recommendation-service.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} --server.port=${SERVER_PORT}"]
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -Dlog4j2.configurationFile=${LOG4J2_CONFIG} -jar /royawl-recommendation-service.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} --server.port=${SERVER_PORT} ${KAFKA_OPTS}"]

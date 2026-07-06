@@ -10,7 +10,7 @@
     	</springProfile>
 
         <!-- Final File Paths -->
-        <Property name="LOG_FILE_PATH"  value="${LOG_BASE_DIR}/royawl-recommendation-server.log"/>
+        <Property name="LOG_FILE_PATH"  value="${LOG_BASE_DIR}/royawl-recommendation-service.log"/>
        <!-- <Property name="HTML_LOG_PATH"  value="${LOG_BASE_DIR}/royawl-api.html"/>-->
 
         <!-- Log Patterns -->
@@ -54,7 +54,7 @@
     </Appenders>
 
     <Loggers>
-        <Root level="info">
+        <Root level="warn">
             <AppenderRef ref="Console"/>
             <AppenderRef ref="File"/>
            <!-- <AppenderRef ref="HtmlLog"/>-->
@@ -70,7 +70,7 @@
             <AppenderRef ref="File"/>
         </Logger>
 
-        <Logger name="org.springframework" level="info" additivity="false">
+        <Logger name="org.springframework" level="warn" additivity="false">
             <AppenderRef ref="Console"/>
             <AppenderRef ref="File"/>
         </Logger>

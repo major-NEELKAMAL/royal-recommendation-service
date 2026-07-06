@@ -9,9 +9,9 @@ pipeline {
     MAVEN_REPO = "/var/lib/jenkins/.m2/repository"
     DEPLOY_PATH = "/home/ubuntu/jar/jenkins/deploy"
     REMOTE_IP = "168.231.102.240"
-    APP_NAME = "royawl-api"
-    IMAGE_NAME = "royawl-api:latest"
-    IMAGE_TAR = "royawl-api.tar"
+    APP_NAME = "royawl-recommendation-service"
+    IMAGE_NAME = "royawl-recommendation-service:latest"
+    IMAGE_TAR = "royawl-recommendation-service.tar"
   }
 
   stages {
@@ -32,12 +32,7 @@ pipeline {
 
         stage('Build') {
           steps {
-            dir('common-service') {
-              git branch: 'main',
-              url: 'https://github.com/major-NEELKAMAL/royawl-common-services.git',
-              credentialsId: 'github-token'
-              sh 'mvn clean install -DskipTests -Dmaven.repo.local=$MAVEN_REPO'
-            }
+            
             dir('.') {
               sh 'mvn clean package -DskipTests -Dmaven.repo.local=$MAVEN_REPO'
             }
@@ -66,19 +61,7 @@ pipeline {
           }
         }
 
-        stage('Database Migration - Upload changelog') {
-          steps {
-            withCredentials([
-              usernamePassword(credentialsId: 'vps-root', usernameVariable: 'VPS_USER', passwordVariable: 'VPS_PASS'),
-            ]) {
-              script {
-                def changelogLocalPath = "${WORKSPACE}/common-service/src/main/resources/db/changelog/changelog.sql"
-                sh "sshpass -p '$VPS_PASS' ssh -o StrictHostKeyChecking=no ${VPS_USER}@${REMOTE_IP} 'rm -f ${DEPLOY_PATH}/changelog.sql'"
-                sh "sshpass -p '$VPS_PASS' scp -o StrictHostKeyChecking=no ${changelogLocalPath} ${VPS_USER}@${REMOTE_IP}:${DEPLOY_PATH}/changelog.sql"
-              }
-            }
-          }
-        }
+        
 
         stage('Cleanup Docker & Local Artifacts') {
           steps {
@@ -100,43 +83,12 @@ pipeline {
           }
         }        
 
-        stage('Database Migration - Run Liquibase') {
-          steps {
-            withCredentials([
-              usernamePassword(credentialsId: 'vps-root', usernameVariable: 'VPS_USER', passwordVariable: 'VPS_PASS'),
-              usernamePassword(credentialsId: 'mysql', usernameVariable: 'DB_USER', passwordVariable: 'DB_PASS')
-            ]) {
-              sh """
-            sshpass -p '$VPS_PASS' ssh -o StrictHostKeyChecking=no ${VPS_USER}@${REMOTE_IP} << 'EOF'
-                cd ${DEPLOY_PATH}
-
-                echo "--- Liquibase: Checking pending changes (Dry Run) ---"
-                liquibase --driver=com.mysql.cj.jdbc.Driver \
-                    --changelog-file=changelog.sql \
-                    --url="jdbc:mysql://localhost:3306/royawl" \
-                    --username=${DB_USER} \
-                    --password=${DB_PASS} \
-                    updateSQL
-
-                echo "--- Liquibase: Executing Update ---"
-                liquibase --driver=com.mysql.cj.jdbc.Driver \
-                    --changelog-file=changelog.sql \
-                    --url="jdbc:mysql://localhost:3306/royawl" \
-                    --username=${DB_USER} \
-                    --password=${DB_PASS} \
-                    update
-EOF
-            """
-            }
-          }
-        }
 
         stage('Execute Deployment') {
 
           steps {
             withCredentials([
-              usernamePassword(credentialsId: 'vps-root', usernameVariable: 'USER', passwordVariable: 'PASS'),
-              string(credentialsId: 'jsypt-password', variable: 'JASYPT_PASSWORD')
+              usernamePassword(credentialsId: 'vps-root', usernameVariable: 'USER', passwordVariable: 'PASS')              
             ]) {
               sh """
                         sshpass -p '$PASS' ssh -T -o StrictHostKeyChecking=no root@${REMOTE_IP} << 'EOF'
@@ -151,14 +103,13 @@ EOF
                                     --name ${APP_NAME} \
                                     --network royawl-bridge \
                                     --add-host=host.docker.internal:host-gateway \
-                                    -p 443:443 \
+                                    -p 9081:9081 \
                                     -v /home/ubuntu/documents/royawl:/app/data/royawl \
-                                    -v /home/ubuntu/config/royawl-api/log4j2.xml:/config/log4j2.xml \
+                                    -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml \
                                     -e LOG4J2_CONFIG=/config/log4j2.xml \
                                     -e SPRING_PROFILES_ACTIVE=prod \
                                     -e SPRING_OUTPUT_ANSI_ENABLED=NEVER \
-                                    -e SERVER_PORT=443 \
-                                    -e JASYPT_PASSWORD="${JASYPT_PASSWORD}" \
+                                    -e SERVER_PORT=9081 \
                                     -e KAFKA_OPTS="--spring.kafka.bootstrap-servers=royawl-kafka:9092" \
                                     ${IMAGE_NAME}
                                     
@@ -174,7 +125,7 @@ EOF
           steps {
             script {
               def HEALTH_URL = "https://api.royawl.com/system/healthcheck"
-              retry(10) {
+              retry(1) {
                 sleep 15
                 def response = sh(script: "curl -s -k ${HEALTH_URL} || echo 'failed'", returnStdout: true).trim()
                 if (!response.contains('"success" : true')) {
