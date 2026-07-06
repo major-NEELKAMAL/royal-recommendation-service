@@ -41,18 +41,11 @@ public class RecommendationController {
   }
 
 
-  @GetMapping("/reload")
-  public ResponseEntity<?> recommend() {
-    try {
-
-      recommendationService.reloadModel();
+  @GetMapping("/healthCheck")
+  public ResponseEntity<?> healthCheck() { 
+    logger.info("\n=========== Health check endpoint called ===========\n");
       return ResponseEntity.ok(null);
-
-    } catch (Exception e) {
-      logger.error("Error loading recommendations file {}: ", e);
-      e.printStackTrace();
-      return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
-    }
+   
   }
 }
 
