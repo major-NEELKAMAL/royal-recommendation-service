@@ -9,8 +9,8 @@ pipeline {
     MAVEN_REPO = "/var/lib/jenkins/.m2/repository"
     DEPLOY_PATH = "/home/ubuntu/jar/jenkins/deploy"
     REMOTE_IP = "168.231.102.240"
-    SSH_CRED_ID = "vps-root"   // Dynamic reference to Jenkins Credential ID
-    SSH_USER = "root"          // Dynamic target execution user context
+    SSH_CRED_ID = "vps-ssh-key"   
+    SSH_USER = "root"
     APP_NAME = "royawl-recommendation-service"
     IMAGE_NAME = "royawl-recommendation-service:latest"
     IMAGE_TAR = "royawl-recommendation-service.tar"
