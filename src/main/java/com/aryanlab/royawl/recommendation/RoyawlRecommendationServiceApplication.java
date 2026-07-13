@@ -7,11 +7,11 @@ import org.springframework.context.annotation.PropertySource;
 
 @EnableDiscoveryClient
 @SpringBootApplication
-@PropertySource({"classpath:application-${spring.profiles.active}.properties"})
+@PropertySource({ "classpath:application-${spring.profiles.active}.properties" })
 public class RoyawlRecommendationServiceApplication {
 
-  public static void main(String[] args) {
-    SpringApplication.run(RoyawlRecommendationServiceApplication.class, args);
-  }
+	public static void main(String[] args) {
+		SpringApplication.run(RoyawlRecommendationServiceApplication.class, args);
+	}
 
 }

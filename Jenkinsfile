@@ -90,33 +90,46 @@ pipeline {
             withCredentials([
               usernamePassword(credentialsId: 'vps-root', usernameVariable: 'USER', passwordVariable: 'PASS')              
             ]) {
-              sh """
-                        sshpass -p '$PASS' ssh -T -o StrictHostKeyChecking=no root@${REMOTE_IP} << 'EOF'
-                                # Load the new image
-                                docker load -i ${DEPLOY_PATH}/${IMAGE_TAR}
-                                
-                                # Stop and remove existing container if it exists
-                                docker rm -f ${APP_NAME} || true
-                                
-                                # Run the new container
-                                docker run -d \
-                                    --name ${APP_NAME} \
-                                    --network royawl-bridge \
-                                    --add-host=host.docker.internal:host-gateway \
-                                    -p 9081:9081 \
-                                    -v /home/ubuntu/documents/royawl:/app/data/royawl \
-                                    -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml \
-                                    -e LOG4J2_CONFIG=/config/log4j2.xml \
-                                    -e SPRING_PROFILES_ACTIVE=prod \
-                                    -e SPRING_OUTPUT_ANSI_ENABLED=NEVER \
-                                    -e SERVER_PORT=9081 \
-                                    -e KAFKA_OPTS="--spring.kafka.bootstrap-servers=royawl-kafka:9092" \
-                                    ${IMAGE_NAME}
-                                    
-                                # Cleanup the tar file to save space
-                                rm ${DEPLOY_PATH}/${IMAGE_TAR}
+            sh """
+    sshpass -p '$PASS' ssh -T -o StrictHostKeyChecking=no root@${REMOTE_IP} << 'EOF'
+        # Load the new image
+        docker load -i ${DEPLOY_PATH}/${IMAGE_TAR}
+        
+        # Stop and remove existing containers if they exist
+        docker rm -f ${APP_NAME}-1 ${APP_NAME}-2 || true
+        
+        # Run Instance 1 on Port 9081
+        docker run -d \\
+            --name ${APP_NAME}-1 \\
+            --network royawl-bridge \\
+            --add-host=host.docker.internal:host-gateway \\
+            -p 9081:9081 \\
+            -v /home/ubuntu/documents/royawl:/app/data/royawl \\
+            -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml \\
+            -e LOG4J2_CONFIG=/config/log4j2.xml \\
+            -e SPRING_PROFILES_ACTIVE=prod \\
+            -e SPRING_OUTPUT_ANSI_ENABLED=NEVER \\
+            -e SERVER_PORT=9081 \\
+            ${IMAGE_NAME}
+
+        # Run Instance 2 on Port 9082
+        docker run -d \\
+            --name ${APP_NAME}-2 \\
+            --network royawl-bridge \\
+            --add-host=host.docker.internal:host-gateway \\
+            -p 9082:9082 \\
+            -v /home/ubuntu/documents/royawl:/app/data/royawl \\
+            -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml \\
+            -e LOG4J2_CONFIG=/config/log4j2.xml \\
+            -e SPRING_PROFILES_ACTIVE=prod \\
+            -e SPRING_OUTPUT_ANSI_ENABLED=NEVER \\
+            -e SERVER_PORT=9082 \\
+            ${IMAGE_NAME}
+            
+        # Cleanup the tar file to save space
+        rm ${DEPLOY_PATH}/${IMAGE_TAR}
 EOF
-                    """
+"""
             }
           }
         }
@@ -124,7 +137,7 @@ EOF
 
           steps {
             script {
-              def HEALTH_URL = "https://api.royawl.com/recommendations/healthcheck"
+              def HEALTH_URL = "https://api.royawl.com/api/system/healthcheck"
               retry(1) {
                 sleep 15
                 def response = sh(script: "curl -s -k ${HEALTH_URL} || echo 'failed'", returnStdout: true).trim()
