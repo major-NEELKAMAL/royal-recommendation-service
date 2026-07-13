@@ -9,6 +9,8 @@ pipeline {
     MAVEN_REPO = "/var/lib/jenkins/.m2/repository"
     DEPLOY_PATH = "/home/ubuntu/jar/jenkins/deploy"
     REMOTE_IP = "168.231.102.240"
+    SSH_CRED_ID = "vps-root"   // Dynamic reference to Jenkins Credential ID
+    SSH_USER = "root"          // Dynamic target execution user context
     APP_NAME = "royawl-recommendation-service"
     IMAGE_NAME = "royawl-recommendation-service:latest"
     IMAGE_TAR = "royawl-recommendation-service.tar"
@@ -50,10 +52,8 @@ pipeline {
 
         stage('Upload Docker Image') {
           steps {
-            withCredentials([
-              usernamePassword(credentialsId: 'vps-root', usernameVariable: 'USER', passwordVariable: 'PASS')
-            ]) {
-              sh "sshpass -p '$PASS' scp -o StrictHostKeyChecking=no ${IMAGE_TAR} ${USER}@${REMOTE_IP}:${DEPLOY_PATH}/${IMAGE_TAR}"
+            sshagent(credentials: ["${env.SSH_CRED_ID}"]) {
+              sh "scp -o StrictHostKeyChecking=no ${IMAGE_TAR} ${env.SSH_USER}@${REMOTE_IP}:${DEPLOY_PATH}/${IMAGE_TAR}"
             }
           }
         }
@@ -76,11 +76,9 @@ pipeline {
 
         stage('Execute Deployment') {
           steps {
-            withCredentials([
-              usernamePassword(credentialsId: 'vps-root', usernameVariable: 'USER', passwordVariable: 'PASS')              
-            ]) {
+            sshagent(credentials: ["${env.SSH_CRED_ID}"]) {
               sh """
-              sshpass -p '$PASS' ssh -T -o StrictHostKeyChecking=no root@${REMOTE_IP} << 'EOF'
+              ssh -T -o StrictHostKeyChecking=no ${env.SSH_USER}@${REMOTE_IP} << 'EOF'
                   # 1. BACKUP PREVIOUS IMAGE BEFORE TOUCHING PRODUCTION
                   if docker images | grep -q "${APP_NAME}"; then
                       echo "Creating backup of currently running stable image..."
@@ -138,15 +136,13 @@ EOF
             script {
               def HEALTH_URL = "https://api.royawl.com/api/system/healthcheck/recommendation"
               
-              // Giving Eureka and Spring Boot more breathing room to start up completely
               retry(3) {
-                sleep 10
+                sleep 15
                 echo "Hitting Health Check Endpoint..."
                 def response = sh(script: "curl -s -k ${HEALTH_URL} || echo 'failed'", returnStdout: true).trim()
                 
-                // Matches the JSON format we configured {"success":true}
                 if (!response.contains('"success":true') && !response.contains('"success" : true')) {
-                  error "App health check failed. Response received: ${response}"
+                  error "App health check failed! Forcing rollback transition."
                 }
               }
             }
@@ -159,12 +155,10 @@ EOF
   post {
     failure {
       script {
-        echo "🚨 DEPLOYMENT FAILED! Initiating immediate production rollback..."
-        withCredentials([
-          usernamePassword(credentialsId: 'vps-root', usernameVariable: 'USER', passwordVariable: 'PASS')              
-        ]) {
+        echo "🚨 DEPLOYMENT FAILED! Initiating immediate production rollback via SSH Key..."
+        sshagent(credentials: ["${env.SSH_CRED_ID}"]) {
           sh """
-          sshpass -p '$PASS' ssh -T -o StrictHostKeyChecking=no root@${REMOTE_IP} << 'EOF'
+          ssh -T -o StrictHostKeyChecking=no ${env.SSH_USER}@${REMOTE_IP} << 'EOF'
               if docker images | grep -q "backup-stable"; then
                   echo "Reverting production instances to backup-stable image..."
                   
@@ -177,7 +171,7 @@ EOF
                   
                   echo "Rollback complete. Production has recovered to previous stable state."
               else
-                  echo "Critical: No backup image found on VPS to roll back to!"
+                  echo "Critical Error: No backup image found on VPS to roll back to!"
               fi
 EOF
 """
