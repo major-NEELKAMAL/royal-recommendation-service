@@ -84,21 +84,23 @@ pipeline {
         }        
 
 
-        stage('Execute Deployment') {
-
+stage('Execute Deployment') {
           steps {
             withCredentials([
               usernamePassword(credentialsId: 'vps-root', usernameVariable: 'USER', passwordVariable: 'PASS')              
             ]) {
             sh """
     sshpass -p '$PASS' ssh -T -o StrictHostKeyChecking=no root@${REMOTE_IP} << 'EOF'
-        # Load the new image
+        # 1. Load the new image
         docker load -i ${DEPLOY_PATH}/${IMAGE_TAR}
         
-        # Stop and remove existing containers if they exist
-        docker rm -f ${APP_NAME}-1 ${APP_NAME}-2 || true
+        # 2. BRING DOWN BOTH CONTAINERS FIRST
+        echo "Stopping and removing existing instances..."
+        docker rm -f ${APP_NAME}-1 2>/dev/null || true
+        docker rm -f ${APP_NAME}-2 2>/dev/null || true
         
-        # Run Instance 1 on Port 9081
+        # 3. START BOTH NEW CONTAINERS
+        echo "Starting Instance 1 on Port 9081..."
         docker run -d \\
             --name ${APP_NAME}-1 \\
             --network royawl-bridge \\
@@ -112,7 +114,7 @@ pipeline {
             -e SERVER_PORT=9081 \\
             ${IMAGE_NAME}
 
-        # Run Instance 2 on Port 9082
+        echo "Starting Instance 2 on Port 9082..."
         docker run -d \\
             --name ${APP_NAME}-2 \\
             --network royawl-bridge \\
@@ -126,7 +128,7 @@ pipeline {
             -e SERVER_PORT=9082 \\
             ${IMAGE_NAME}
             
-        # Cleanup the tar file to save space
+        # 4. Cleanup the tar file to save space
         rm ${DEPLOY_PATH}/${IMAGE_TAR}
 EOF
 """
