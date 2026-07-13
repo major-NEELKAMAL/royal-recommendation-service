@@ -1,6 +1,7 @@
 package com.aryanlab.royawl.recommendation.controllers;
 
 import java.util.List;
+import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,10 +41,16 @@ public class RecommendationController {
 		}
 	}
 
-	@GetMapping("/healthCheck")
-	public ResponseEntity<?> healthCheck() {
-		logger.info("\n=========== Health check endpoint called ===========\n");
-		return ResponseEntity.ok(null);
-
+	@GetMapping("/healthcheck")
+	public ResponseEntity<Map<String, Object>> healthCheck() {
+	    logger.info("\n=========== Health check endpoint called ===========\n");
+	    
+	    // Returns {"success": true, "status": "UP"}
+	    Map<String, Object> response = Map.of(
+	        "success", true,
+	        "status", "UP"
+	    );
+	    
+	    return ResponseEntity.ok(response);
 	}
 }
