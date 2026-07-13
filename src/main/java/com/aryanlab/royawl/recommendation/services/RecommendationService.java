@@ -46,22 +46,33 @@ public class RecommendationService {
 	}
 
 	private void loadModel() {
-		String basePath = applicationProperties.getRecommendationModelPath();
-		logger.info("Loading ALS model and metadata from {}", basePath);
+	    String basePath = applicationProperties.getRecommendationModelPath();
+	    try {
+	        SparkSession isolatedSession = spark.newSession(); // Keep states cleanly isolated
 
-		try {
-			this.alsModel = ALSModel.load(basePath + "/als-model");
-			this.userIndexerModel = StringIndexerModel.load(basePath + "/user-indexer");
-			// Load and cache locally to ensure microsecond lookup latency
-			this.postMetadataDF = spark.read().parquet(basePath + "/post-metadata").cache();
+	        ALSModel newAlsModel = ALSModel.load(basePath + "/als-model");
+	        StringIndexerModel newUserIndexerModel = StringIndexerModel.load(basePath + "/user-indexer");
+	        
+	        // Read and immediately cache
+	        Dataset<Row> newPostMetadataDF = isolatedSession.read().parquet(basePath + "/post-metadata").cache();
+	        
+	        // CRITICAL: Forces Spark to pull the bytes off the shared volume NOW 
+	        // while the files are guaranteed to be un-rotated
+	        newPostMetadataDF.count(); 
 
-			logger.info("✅ ALS Model and Metadata loaded successfully");
-		} catch (Exception e) {
-			logger.error("❌ Failed to load model or metadata from {}", basePath, e);
-			this.alsModel = null;
-			this.userIndexerModel = null;
-			this.postMetadataDF = null;
-		}
+	        // Safely unpersist the reference pointer to the old filesystem mapping
+	        if (this.postMetadataDF != null) {
+	            try { this.postMetadataDF.unpersist(false); } catch (Exception e) {}
+	        }
+
+	        this.alsModel = newAlsModel;
+	        this.userIndexerModel = newUserIndexerModel;
+	        this.postMetadataDF = newPostMetadataDF;
+
+	        logger.info("✅ ALS Model and Metadata safely hot-swapped in memory.");
+	    } catch (Exception e) {
+	        logger.error("❌ Failed hot-swapping new model; retaining previous stable state.", e);
+	    }
 	}
 
 	public synchronized void reloadModel() {

@@ -17,7 +17,10 @@ public class RecommendationReloadListener {
 	private final RecommendationService recommendationService;
 	private static final Logger log = LoggerFactory.getLogger(RecommendationReloadListener.class);
 
-	@KafkaListener(topics = "${app.kafka.topic.recommendation-reload}", groupId = "${app.kafka.consumer.group.recommendation-reload}-${spring.application.name}-${server.port}")
+	@KafkaListener(
+		    topics = "${app.kafka.topic.recommendation-reload}", 
+		    groupId = "${app.kafka.consumer.group.recommendation-reload}-${spring.application.name}-${HOSTNAME:unknown}"
+		)
 	public void handleReload(String message, Acknowledgment ack) {
 
 		log.info("Received reload command on instance {}: {}",
