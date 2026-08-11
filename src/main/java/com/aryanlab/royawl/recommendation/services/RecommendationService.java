@@ -147,20 +147,39 @@ public class RecommendationService {
 	 * Fallback helper method supporting sorting strategies: "trending" or "latest"
 	 */
 	private List<Long> getFallbackRecommendations(int postTypeInt, int offset, int limit, String strategy) {
-		postMetadataDF.createOrReplaceTempView("fallback_metadata");
-		
-		String orderByClause = "popularity_score DESC";
-		if ("latest".equalsIgnoreCase(strategy)) {
-			orderByClause = "created_at DESC";
-		}
+	    try {
+	        String sortColumn = "popularity_score";
+	        boolean ascending = false;
+	        if ("latest".equalsIgnoreCase(strategy)) {
+	            sortColumn = "created_at";
+	            ascending = false;
+	        }
 
-		String fallbackSql = String.format(
-			"SELECT CAST(post_id_str AS LONG) as post_id FROM fallback_metadata " +
-			"WHERE post_type = %d ORDER BY %s LIMIT %d OFFSET %d", 
-			postTypeInt, orderByClause, limit, offset
-		);
-		
-		return spark.sql(fallbackSql).select("post_id").as(Encoders.LONG()).collectAsList();
+	        // 1. Filter by post type using native DataFrame API
+	        Dataset<Row> filtered = postMetadataDF.filter(col("post_type").equalTo(postTypeInt));
+
+	        // 2. Sort natively by the chosen strategy column
+	        Dataset<Row> sorted = filtered.sort(ascending ? col(sortColumn).asc() : col(sortColumn).desc());
+
+	        // 3. Extract post_id_str, cast to Long, and apply pagination natively via limit/collect
+	        // (For small-to-medium metadata lists, collecting limited rows safely avoids catalog mapping errors)
+	        List<Row> rows = sorted.select(col("post_id_str").cast(DataTypes.LongType).alias("post_id"))
+	                               .offset(offset)
+	                               .limit(limit)
+	                               .collectAsList();
+
+	        List<Long> resultIds = new java.util.ArrayList<>();
+	        for (Row row : rows) {
+	            if (!row.isNullAt(0)) {
+	                resultIds.add(row.getLong(0));
+	            }
+	        }
+	        return resultIds;
+
+	    } catch (Exception e) {
+	        logger.error("Failed to execute fallback recommendations via native DataFrame API", e);
+	        return Collections.emptyList();
+	    }
 	}
 
 	public static class UserId implements Serializable {
