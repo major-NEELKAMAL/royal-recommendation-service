@@ -46,43 +46,34 @@ public class RecommendationService {
 	}
 
 	private void loadModel() {
-	    String basePath = applicationProperties.getRecommendationModelPath();
-	    try {
-	        SparkSession isolatedSession = spark.newSession(); // Keep states cleanly isolated
+		String basePath = applicationProperties.getRecommendationModelPath();
+		try {
+			SparkSession isolatedSession = spark.newSession();
 
-	        ALSModel newAlsModel = ALSModel.load(basePath + "/als-model");
-	        StringIndexerModel newUserIndexerModel = StringIndexerModel.load(basePath + "/user-indexer");
-	        
-	        // Read and immediately cache
-	        Dataset<Row> newPostMetadataDF = isolatedSession.read().parquet(basePath + "/post-metadata").cache();
-	        
-	        // CRITICAL: Forces Spark to pull the bytes off the shared volume NOW 
-	        // while the files are guaranteed to be un-rotated
-	        newPostMetadataDF.count(); 
+			ALSModel newAlsModel = ALSModel.load(basePath + "/als-model");
+			StringIndexerModel newUserIndexerModel = StringIndexerModel.load(basePath + "/user-indexer");
+			
+			Dataset<Row> newPostMetadataDF = isolatedSession.read().parquet(basePath + "/post-metadata").cache();
+			newPostMetadataDF.count(); // Forces read
 
-	        // Safely unpersist the reference pointer to the old filesystem mapping
-	        if (this.postMetadataDF != null) {
-	            try { this.postMetadataDF.unpersist(false); } catch (Exception e) {}
-	        }
+			if (this.postMetadataDF != null) {
+				try { this.postMetadataDF.unpersist(false); } catch (Exception e) {}
+			}
 
-	        this.alsModel = newAlsModel;
-	        this.userIndexerModel = newUserIndexerModel;
-	        this.postMetadataDF = newPostMetadataDF;
+			this.alsModel = newAlsModel;
+			this.userIndexerModel = newUserIndexerModel;
+			this.postMetadataDF = newPostMetadataDF;
 
-	        logger.info("✅ ALS Model and Metadata safely hot-swapped in memory.");
-	    } catch (Exception e) {
-	        logger.error("❌ Failed hot-swapping new model; retaining previous stable state.", e);
-	    }
+			logger.info("✅ ALS Model and Enriched Metadata safely hot-swapped in memory.");
+		} catch (Exception e) {
+			logger.error("❌ Failed hot-swapping new model; retaining previous stable state.", e);
+		}
 	}
 
 	public synchronized void reloadModel() {
 		loadModel();
 	}
 
-	/**
-	 * @param postTypeInt Pass the smallint numeric identifier (e.g. Image value vs
-	 *                    Video value)
-	 */
 	public List<Long> getRecommendationsForUser(int postTypeInt, long userId, int offset, int limit) {
 
 		if (alsModel == null || userIndexerModel == null || postMetadataDF == null) {
@@ -98,34 +89,78 @@ public class RecommendationService {
 		Dataset<Row> indexedUserDF = userIndexerModel.transform(rawUserDF).withColumn("userIndexInt",
 				col("userIndex").cast(DataTypes.IntegerType));
 
-		if (indexedUserDF.limit(1).count() == 0) {
-			logger.info("User {} not found in trained index.", userId);
-			return Collections.emptyList();
+		// Check if user exists in the trained index model
+		boolean userExists = true;
+		try {
+			if (indexedUserDF.limit(1).count() == 0 || indexedUserDF.select("userIndex").first().isNullAt(0)) {
+				userExists = false;
+			}
+		} catch (Exception e) {
+			userExists = false;
 		}
 
-		// 3. Request highly localized vector matches (e.g. top 500 items)
-		int fetchK = Math.max(500, (offset + limit) * 3);
-		Dataset<Row> recsDF = alsModel.recommendForUserSubset(indexedUserDF, fetchK);
+		// 3. COLD-START FALLBACK: If user is missing, serve trending/latest content seamlessly
+		if (!userExists) {
+			logger.info("User {} not found in trained index. Serving fallback recommendations.", userId);
+			return getFallbackRecommendations(postTypeInt, offset, limit, "trending"); // Change to "latest" if preferred
+		}
 
-		// 4. Structural Extraction
-		Dataset<Row> exploded = recsDF.select(explode(col("recommendations")).alias("rec"))
-				.select(col("rec.postIndexInt").alias("postIndexInt"), col("rec.rating").alias("score"));
+		try {
+			// 4. Request highly localized vector matches
+			int fetchK = Math.max(500, (offset + limit) * 3);
+			Dataset<Row> recsDF = alsModel.recommendForUserSubset(indexedUserDF, fetchK);
 
-		// 5. In-Memory Broadcast Join against the isolated 500 recommendation records
-		Dataset<Row> decodedDF = exploded
-				.join(functions.broadcast(postMetadataDF),
-						exploded.col("postIndexInt").equalTo(postMetadataDF.col("id")))
-				.select(col("post_id_str"), col("post_type"), col("score"));
+			if (recsDF.count() == 0) {
+				return getFallbackRecommendations(postTypeInt, offset, limit, "trending");
+			}
 
-		// 6. Pagination & Selection via SQL View
-		decodedDF.createOrReplaceTempView("user_recs");
-		String sql = String.format("SELECT CAST(post_id_str AS LONG) as post_id FROM user_recs "
-				+ "WHERE post_type = %d " + "ORDER BY score DESC LIMIT %d OFFSET %d", postTypeInt, limit, offset);
+			// 5. Structural Extraction
+			Dataset<Row> exploded = recsDF.select(explode(col("recommendations")).alias("rec"))
+					.select(col("rec.postIndexInt").alias("postIndexInt"), col("rec.rating").alias("score"));
 
-		Dataset<Row> paged = spark.sql(sql);
+			// 6. In-Memory Broadcast Join
+			Dataset<Row> decodedDF = exploded
+					.join(functions.broadcast(postMetadataDF),
+							exploded.col("postIndexInt").equalTo(postMetadataDF.col("id")))
+					.select(col("post_id_str"), col("post_type"), col("score"));
 
-		return paged.select("post_id").as(Encoders.LONG()).collectAsList();
+			// 7. Pagination & Selection via SQL View
+			decodedDF.createOrReplaceTempView("user_recs");
+			String sql = String.format("SELECT CAST(post_id_str AS LONG) as post_id FROM user_recs "
+					+ "WHERE post_type = %d ORDER BY score DESC LIMIT %d OFFSET %d", postTypeInt, limit, offset);
 
+			List<Long> results = spark.sql(sql).select("post_id").as(Encoders.LONG()).collectAsList();
+
+			if (results.isEmpty()) {
+				return getFallbackRecommendations(postTypeInt, offset, limit, "trending");
+			}
+
+			return results;
+
+		} catch (Exception e) {
+			logger.error("Error fetching recommendations for user {}, falling back.", userId, e);
+			return getFallbackRecommendations(postTypeInt, offset, limit, "trending");
+		}
+	}
+
+	/**
+	 * Fallback helper method supporting sorting strategies: "trending" or "latest"
+	 */
+	private List<Long> getFallbackRecommendations(int postTypeInt, int offset, int limit, String strategy) {
+		postMetadataDF.createOrReplaceTempView("fallback_metadata");
+		
+		String orderByClause = "popularity_score DESC";
+		if ("latest".equalsIgnoreCase(strategy)) {
+			orderByClause = "created_at DESC";
+		}
+
+		String fallbackSql = String.format(
+			"SELECT CAST(post_id_str AS LONG) as post_id FROM fallback_metadata " +
+			"WHERE post_type = %d ORDER BY %s LIMIT %d OFFSET %d", 
+			postTypeInt, orderByClause, limit, offset
+		);
+		
+		return spark.sql(fallbackSql).select("post_id").as(Encoders.LONG()).collectAsList();
 	}
 
 	public static class UserId implements Serializable {
