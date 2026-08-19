@@ -102,7 +102,7 @@ pipeline {
                       --add-host=host.docker.internal:host-gateway \\
                       -p 9081:9081 \\
                       -v /home/ubuntu/documents/royawl:/app/data/royawl \\
-                      -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml \\
+                      -v /home/ubuntu/config/royawl-recommendation-service-1/log4j2.xml:/config/log4j2.xml \\
                       -e LOG4J2_CONFIG=/config/log4j2.xml \\
                       -e SPRING_PROFILES_ACTIVE=prod \\
                       -e SPRING_OUTPUT_ANSI_ENABLED=NEVER \\
@@ -116,7 +116,7 @@ pipeline {
                       --add-host=host.docker.internal:host-gateway \\
                       -p 9082:9082 \\
                       -v /home/ubuntu/documents/royawl:/app/data/royawl \\
-                      -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml \\
+                      -v /home/ubuntu/config/royawl-recommendation-service-2/log4j2.xml:/config/log4j2.xml \\
                       -e LOG4J2_CONFIG=/config/log4j2.xml \\
                       -e SPRING_PROFILES_ACTIVE=prod \\
                       -e SPRING_OUTPUT_ANSI_ENABLED=NEVER \\
