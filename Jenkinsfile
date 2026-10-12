@@ -101,6 +101,7 @@ pipeline {
                   echo "Starting Instance 1 on Port 9081..."
                   docker run -d \\
                       --name ${APP_NAME}-1 \\
+                      --memory 2g --memory-swap 2g --restart unless-stopped \\
                       --network royawl-bridge \\
                       --add-host=host.docker.internal:host-gateway \\
                       -p 9081:9081 \\
@@ -117,6 +118,7 @@ pipeline {
                   echo "Starting Instance 2 on Port 9082..."
                   docker run -d \\
                       --name ${APP_NAME}-2 \\
+                      --memory 2g --memory-swap 2g --restart unless-stopped \\
                       --network royawl-bridge \\
                       --add-host=host.docker.internal:host-gateway \\
                       -p 9082:9082 \\
@@ -176,9 +178,9 @@ EOF
                   docker rm -f ${APP_NAME}-1 2>/dev/null || true
                   docker rm -f ${APP_NAME}-2 2>/dev/null || true
                   
-                  docker run -d --name ${APP_NAME}-1 --network royawl-bridge --add-host=host.docker.internal:host-gateway -p 9081:9081 -v /home/ubuntu/documents/royawl:/app/data/royawl -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml -e LOG4J2_CONFIG=/config/log4j2.xml -e SPRING_PROFILES_ACTIVE=prod -e SPRING_OUTPUT_ANSI_ENABLED=NEVER -e SERVER_PORT=9081 -e EUREKA_USERNAME="${EUREKA_USERNAME}" -e EUREKA_PASSWORD="${EUREKA_PASSWORD}" ${BACKUP_IMAGE}
+                  docker run -d --name ${APP_NAME}-1 --memory 2g --memory-swap 2g --restart unless-stopped --network royawl-bridge --add-host=host.docker.internal:host-gateway -p 9081:9081 -v /home/ubuntu/documents/royawl:/app/data/royawl -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml -e LOG4J2_CONFIG=/config/log4j2.xml -e SPRING_PROFILES_ACTIVE=prod -e SPRING_OUTPUT_ANSI_ENABLED=NEVER -e SERVER_PORT=9081 -e EUREKA_USERNAME="${EUREKA_USERNAME}" -e EUREKA_PASSWORD="${EUREKA_PASSWORD}" ${BACKUP_IMAGE}
                   
-                  docker run -d --name ${APP_NAME}-2 --network royawl-bridge --add-host=host.docker.internal:host-gateway -p 9082:9082 -v /home/ubuntu/documents/royawl:/app/data/royawl -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml -e LOG4J2_CONFIG=/config/log4j2.xml -e SPRING_PROFILES_ACTIVE=prod -e SPRING_OUTPUT_ANSI_ENABLED=NEVER -e SERVER_PORT=9082 -e EUREKA_USERNAME="${EUREKA_USERNAME}" -e EUREKA_PASSWORD="${EUREKA_PASSWORD}" ${BACKUP_IMAGE}
+                  docker run -d --name ${APP_NAME}-2 --memory 2g --memory-swap 2g --restart unless-stopped --network royawl-bridge --add-host=host.docker.internal:host-gateway -p 9082:9082 -v /home/ubuntu/documents/royawl:/app/data/royawl -v /home/ubuntu/config/royawl-recommendation-service/log4j2.xml:/config/log4j2.xml -e LOG4J2_CONFIG=/config/log4j2.xml -e SPRING_PROFILES_ACTIVE=prod -e SPRING_OUTPUT_ANSI_ENABLED=NEVER -e SERVER_PORT=9082 -e EUREKA_USERNAME="${EUREKA_USERNAME}" -e EUREKA_PASSWORD="${EUREKA_PASSWORD}" ${BACKUP_IMAGE}
                   
                   echo "Rollback complete. Production has recovered to previous stable state."
               else
