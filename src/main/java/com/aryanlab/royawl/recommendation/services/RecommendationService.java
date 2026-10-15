@@ -4,6 +4,7 @@ import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.explode;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -28,6 +29,12 @@ import com.aryanlab.royawl.recommendation.configs.ApplicationProperties;
 public class RecommendationService {
 
 	private static final Logger logger = LoggerFactory.getLogger(RecommendationService.class);
+
+	// ModelTrainingJob gives posts with no interactions this id in post-metadata
+	private static final long COLD_POST_ID = -1L;
+
+	// Every 4th slot of a personalised feed is a zero-interaction post (while any are left)
+	private static final int COLD_POST_INTERVAL = 4;
 
 	private volatile ALSModel alsModel;
 	private volatile StringIndexerModel userIndexerModel;
@@ -124,12 +131,15 @@ public class RecommendationService {
 							exploded.col("postIndexInt").equalTo(postMetadataDF.col("id")))
 					.select(col("post_id_str"), col("post_type"), col("score"));
 
-			// 7. Pagination & Selection via SQL View
-			decodedDF.createOrReplaceTempView("user_recs");
-			String sql = String.format("SELECT CAST(post_id_str AS LONG) as post_id FROM user_recs "
-					+ "WHERE post_type = %d ORDER BY score DESC LIMIT %d OFFSET %d", postTypeInt, limit, offset);
+			// 7. Every ALS match of this type, best first (pagination happens after the blend)
+			List<Long> alsPostIds = decodedDF.filter(col("post_type").equalTo(postTypeInt))
+					.orderBy(col("score").desc())
+					.select(col("post_id_str").cast(DataTypes.LongType))
+					.as(Encoders.LONG()).collectAsList();
 
-			List<Long> results = spark.sql(sql).select("post_id").as(Encoders.LONG()).collectAsList();
+			// 8. Blend in posts nobody has interacted with yet: ALS never scores them (id = -1),
+			// so without this they could never reach a feed and never get a first interaction
+			List<Long> results = paginate(blendColdPosts(alsPostIds, getColdPostIds(postTypeInt)), offset, limit);
 
 			if (results.isEmpty()) {
 				return getFallbackRecommendations(postTypeInt, offset, limit, "trending");
@@ -141,6 +151,49 @@ public class RecommendationService {
 			logger.error("Error fetching recommendations for user {}, falling back.", userId, e);
 			return getFallbackRecommendations(postTypeInt, offset, limit, "trending");
 		}
+	}
+
+	/**
+	 * Posts of a type with no interactions at training time (id = -1 in the
+	 * metadata), newest first.
+	 */
+	private List<Long> getColdPostIds(int postTypeInt) {
+		try {
+			return postMetadataDF
+					.filter(col("post_type").equalTo(postTypeInt).and(col("id").equalTo(COLD_POST_ID)))
+					.orderBy(col("created_at").desc())
+					.select(col("post_id_str").cast(DataTypes.LongType))
+					.as(Encoders.LONG()).collectAsList();
+		} catch (Exception e) {
+			logger.error("Failed to read zero-interaction posts from metadata", e);
+			return Collections.emptyList();
+		}
+	}
+
+	/**
+	 * Puts one cold post after every COLD_POST_INTERVAL - 1 ALS posts; whatever is
+	 * left of either list follows in order.
+	 */
+	private static List<Long> blendColdPosts(List<Long> alsPostIds, List<Long> coldPostIds) {
+		List<Long> blended = new ArrayList<>(alsPostIds.size() + coldPostIds.size());
+		int als = 0;
+		int cold = 0;
+		while (als < alsPostIds.size() || cold < coldPostIds.size()) {
+			boolean coldSlot = (blended.size() + 1) % COLD_POST_INTERVAL == 0;
+			if (cold < coldPostIds.size() && (coldSlot || als >= alsPostIds.size())) {
+				blended.add(coldPostIds.get(cold++));
+			} else {
+				blended.add(alsPostIds.get(als++));
+			}
+		}
+		return blended;
+	}
+
+	private static List<Long> paginate(List<Long> postIds, int offset, int limit) {
+		if (offset >= postIds.size()) {
+			return Collections.emptyList();
+		}
+		return new ArrayList<>(postIds.subList(offset, Math.min(postIds.size(), offset + limit)));
 	}
 
 	/**
@@ -159,7 +212,9 @@ public class RecommendationService {
 	        Dataset<Row> filtered = postMetadataDF.filter(col("post_type").equalTo(postTypeInt));
 
 	        // 2. Sort natively by the chosen strategy column
-	        Dataset<Row> sorted = filtered.sort(ascending ? col(sortColumn).asc() : col(sortColumn).desc());
+	        // Newest first among equal scores, so zero-interaction posts aren't stuck in arbitrary order
+	        Dataset<Row> sorted = filtered.sort(ascending ? col(sortColumn).asc() : col(sortColumn).desc(),
+	                col("created_at").desc());
 
 	        // 3. Extract post_id_str, cast to Long, and apply pagination natively via limit/collect
 	        // (For small-to-medium metadata lists, collecting limited rows safely avoids catalog mapping errors)

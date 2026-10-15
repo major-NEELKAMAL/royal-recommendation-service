@@ -8,9 +8,9 @@ pipeline {
   environment {
     MAVEN_REPO = "/var/lib/jenkins/.m2/repository"
     DEPLOY_PATH = "/home/ubuntu/jar/jenkins/deploy"
-    REMOTE_IP = "168.231.102.240"
-    SSH_CRED_ID = "vps-ssh-key"   
-    SSH_USER = "root"
+    REMOTE_IP = credentials('test-server-ip')
+    SSH_CRED_ID = "test-server-ssh-key"   
+    SSH_USER = "ubuntu"
     APP_NAME = "royawl-recommendation-service"
     IMAGE_NAME = "royawl-recommendation-service:latest"
     IMAGE_TAR = "royawl-recommendation-service.tar"
@@ -44,7 +44,7 @@ pipeline {
         stage('Docker Image Create') {
           steps {
             script {
-              sh "docker build --platform linux/amd64 -t ${IMAGE_NAME} ."
+              sh "docker buildx build --platform linux/arm64 --load -t ${IMAGE_NAME} ."
               sh "docker save ${IMAGE_NAME} -o ${IMAGE_TAR}"
             }
           }
@@ -147,7 +147,7 @@ EOF
               retry(3) {
                 sleep 15
                 echo "Hitting Health Check Endpoint..."
-                def response = sh(script: "curl -s -k ${HEALTH_URL} || echo 'failed'", returnStdout: true).trim()
+                def response = sh(script: "curl -s -k --max-time 10 --resolve api.royawl.com:443:\${REMOTE_IP} ${HEALTH_URL} || echo 'failed'", returnStdout: true).trim()
                 
                 if (!response.contains('"success":true') && !response.contains('"success" : true')) {
                   error "App health check failed! Forcing rollback transition."
